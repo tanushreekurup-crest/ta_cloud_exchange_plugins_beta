@@ -1,4 +1,4 @@
-# 1.4.0
+# 1.4.0-beta
 ## Added
 - Added support for region selection.
 
