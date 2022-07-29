@@ -163,8 +163,8 @@ class ChroniclePlugin(PluginBase):
             )
             
         try:   
-            if (not self._check_dummy_post(configuration)
-            and configuration.get("region","") != "custom"):
+            if ((configuration.get("region","") != "custom")
+            and not self._check_dummy_post(configuration)):
                 self.logger.error(
                     "Chronicle Plugin: Validation error occurred. Error: "
                     "Invalid credentials"
@@ -279,9 +279,8 @@ class ChroniclePlugin(PluginBase):
             
             if configuration.get("region", "") == "custom":
                 BASE_URL = configuration.get("custom_region", "").strip()               
-            else:   
+            else:  
                 BASE_URL = DEFAULT_URL[configuration.get("region", "usa")]
-                
             if (not self._url_valid(BASE_URL)
             and configuration.get("region","") == "custom"):
                 return False
