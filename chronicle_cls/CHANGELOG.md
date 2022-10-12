@@ -1,6 +1,9 @@
-# 1.4.0-beta
+# 1.4.1
 ## Added
 - Added support for region selection.
+
+## Fixed
+- Removed invalid UDM fields from the default mapping file.
 
 # 1.3.1
 ## Changed
