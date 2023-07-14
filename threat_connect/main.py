@@ -413,12 +413,14 @@ class ThreatConnectPlugin(PluginBase):
             storage = self.storage
         else:
             storage = {}
-
         display_storage = self.storage
-        del display_storage["configuration_details"]["access_id"]
-        del display_storage["configuration_details"]["secret_key"]
-        next_uri = display_storage.get("next_uri", "")
-        configuration_details = display_storage.get("configuration_details", {})
+        configuration_details = {}
+        next_uri = ""
+        if display_storage and display_storage.get("configuration_details") and display_storage.get("configuration_details").get("access_id") and display_storage.get("configuration_details").get("secret_key"):
+            del display_storage["configuration_details"]["access_id"]
+            del display_storage["configuration_details"]["secret_key"]
+            next_uri = display_storage.get("next_uri", "")
+            configuration_details = display_storage.get("configuration_details", {})
         self.logger.debug(
             f"{self.log_prefix}: Pulling the indicators, storage value(next uri): {next_uri}, storage value(configuration_details): {configuration_details}"
         )
