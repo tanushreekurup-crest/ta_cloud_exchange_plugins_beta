@@ -414,8 +414,13 @@ class ThreatConnectPlugin(PluginBase):
         else:
             storage = {}
 
+        display_storage = self.storage
+        del display_storage["configuration_details"]["access_id"]
+        del display_storage["configuration_details"]["secret_key"]
+        next_uri = display_storage.get("next_uri", "")
+        configuration_details = display_storage.get("configuration_details", {})
         self.logger.debug(
-            f"{self.log_prefix}: Pulling the indicators, storage value: {storage}"
+            f"{self.log_prefix}: Pulling the indicators, storage value(next uri): {next_uri}, storage value(configuration_details): {configuration_details}"
         )
         api_url = storage.get("next_uri")
         prev_configuration = storage.get("configuration_details", {})
@@ -447,6 +452,9 @@ class ThreatConnectPlugin(PluginBase):
             try:
                 ioc_response = self.get_pull_request(
                     api_url,
+                )
+                self.logger.debug(
+                    f"{self.log_prefix}: API Response code: {ioc_response.status_code}"
                 )
                 ioc_response_json = self.handle_error(ioc_response)
             except Exception as ex:
