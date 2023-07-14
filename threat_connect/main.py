@@ -40,6 +40,8 @@ import hashlib
 import base64
 import requests
 import urllib.parse
+import os
+import json
 from typing import Dict, List
 from netskope.integrations.cte.plugin_base import (
     PluginBase,
@@ -83,7 +85,11 @@ SEVERITY_TO_RATING = {
 }
 
 LIMIT = 1000  # Maximum Response LIMIT at Time.
+PAGE_LIMIT = 100
 TAG_NAME = "Netskope CE"
+PLATFORM_NAME = "ThreatConnect"
+MODULE_NAME = "CTE"
+PLUGIN_VERSION = "1.1.0"
 
 
 class ThreatConnectPlugin(PluginBase):
@@ -93,6 +99,53 @@ class ThreatConnectPlugin(PluginBase):
         PluginBase (PluginBase): Inherit PluginBase Class from Cloud
         Threat Exchange Integration.
     """
+
+    def __init__(
+        self,
+        name,
+        *args,
+        **kwargs,
+    ):
+        """Init function.
+
+        Args:
+            name (str): Configuration Name.
+        """
+        super().__init__(
+            name,
+            *args,
+            **kwargs,
+        )
+        self.plugin_name, self.plugin_version = self._get_plugin_info()
+        self.log_prefix = f"{MODULE_NAME} {self.plugin_name}"
+        if name:
+            self.log_prefix = f"{self.log_prefix} [{name}]"
+
+    def _get_plugin_info(self) -> tuple:
+        """Get plugin name and version from manifest.
+
+        Returns:
+            tuple: Tuple of plugin's name and version fetched from manifest.
+        """
+        try:
+            file_path = os.path.join(
+                str(os.path.dirname(os.path.abspath(__file__))),
+                "manifest.json",
+            )
+            with open(file_path, "r") as manifest:
+                manifest_json = json.load(manifest)
+                plugin_name = manifest_json.get("name", PLATFORM_NAME)
+                plugin_version = manifest_json.get("version", PLUGIN_VERSION)
+                return (plugin_name, plugin_version)
+        except Exception as exp:
+            self.logger.info(
+                message=(
+                    f"{MODULE_NAME} {PLATFORM_NAME}: Error occurred while"
+                    " getting plugin details."
+                ),
+                details=str(exp),
+            )
+        return (PLATFORM_NAME, PLUGIN_VERSION)
 
     def handle_error(self, resp) -> Dict:
         """Handle the different HTTP response code.
@@ -109,38 +162,36 @@ class ThreatConnectPlugin(PluginBase):
                 return resp.json()
             except ValueError:
                 self.logger.error(
-                    "Plugin: ThreatConnect, "
+                    f"{self.log_prefix}: "
                     "Exception occurred while parsing JSON response."
                 )
         elif resp.status_code == 401:
             self.logger.error(
-                "Plugin: ThreatConnect, Received exit code 401, "
-                "Authentication Error.",
-                details=resp.text
+                f"{self.log_prefix}: Received exit code 401, " "Authentication Error.",
+                details=resp.text,
             )
         elif resp.status_code == 403:
             self.logger.error(
-                "Plugin: ThreatConnect, "
-                "Received exit code 403, Forbidden User.",
-                details=resp.text
+                f"{self.log_prefix}: " "Received exit code 403, Forbidden User.",
+                details=resp.text,
             )
         elif resp.status_code >= 400 and resp.status_code < 500:
             self.logger.error(
-                f"Plugin: ThreatConnect, "
+                f"{self.log_prefix}: "
                 f"Received exit code {resp.status_code}, HTTP client Error.",
-                details=resp.text
+                details=resp.text,
             )
         elif resp.status_code >= 500 and resp.status_code < 600:
             self.logger.error(
-                f"Plugin: ThreatConnect, "
+                f"{self.log_prefix}: "
                 f"Received exit code {resp.status_code}, HTTP server Error.",
-                details=resp.text
+                details=resp.text,
             )
         else:
             self.logger.error(
-                f"Plugin: ThreatConnect, "
+                f"{self.log_prefix}: "
                 f"Received exit code {resp.status_code}, HTTP Error.",
-                details=resp.text
+                details=resp.text,
             )
         resp.raise_for_status()
 
@@ -210,11 +261,12 @@ class ThreatConnectPlugin(PluginBase):
         result_start = 0
         if self.last_run_at:
             last_run_time = self.last_run_at
+            last_run_time = last_run_time.strftime("%Y-%m-%dT%H:%M:%SZ")
         else:
             last_run_time = datetime.datetime.now() - datetime.timedelta(
                 days=self.configuration["days"]
             )
-        last_run_time = last_run_time.strftime("%Y-%m-%dT%H:%M:%SZ")[:10]
+            last_run_time = last_run_time.strftime("%Y-%m-%dT%H:%M:%SZ")
         query = None
 
         if threat_type == "Both":
@@ -226,7 +278,7 @@ class ThreatConnectPlugin(PluginBase):
         query += f" AND lastModified >= '{last_run_time}'"
 
         filtered_string = "tql=" + urllib.parse.quote(query)
-        api_url = f"{api_path}?fields=tags&{filtered_string}"
+        api_url = f"{api_path}?sorting=lastModified%20asc&fields=tags&{filtered_string}"
         api_url += f"&resultStart={result_start}&resultLimit={LIMIT}"
         return api_url
 
@@ -246,8 +298,6 @@ class ThreatConnectPlugin(PluginBase):
             "GET",
         )
         query_endpoint = self.configuration["base_url"] + api_url
-        self.logger.info(f"Debug Plugin: Threatconnect, Query endpoint: {query_endpoint}")
-        self.logger.info(f"Debug Plugin: Threatconnect, Headers: {headers}")
         ioc_response = self._api_calls(
             requests.get(
                 query_endpoint,
@@ -266,84 +316,79 @@ class ThreatConnectPlugin(PluginBase):
             tagging (_type_): _description_
             indicator_list (_type_): _description_
         """
-
-        md5, sha256, url_ioc, file, skipped = 0, 0, 0, 0, 0
+        md5, sha256, url_ioc, file_count, skipped = 0, 0, 0, 0, 0
         for ioc_json in ioc_response_json["data"]:
             if (
                 "tags" in ioc_json
                 and "data" in ioc_json["tags"]
                 and TAG_NAME
-                not in [
+                in [
                     tag_info["name"]
                     for tag_info in ioc_json["tags"]["data"]
                     if "name" in tag_info
                 ]
             ):
-                if ioc_json["type"] == "File":
-                    file += 1
-                    if "md5" in ioc_json:
-                        indicator_list.append(
-                            Indicator(
-                                value=ioc_json["md5"].lower(),
-                                type=IndicatorType.MD5,
-                                active=ioc_json.get("active", True),
-                                severity=RATING_TO_SEVERITY[
-                                    ioc_json.get("rating", 0)
-                                ],
-                                reputation=self.get_reputation(ioc_json),
-                                comments=ioc_json.get("description", ""),
-                                firstSeen=ioc_json.get("dateAdded"),
-                                lastSeen=ioc_json.get("lastModified"),
-                                tags=self._create_tags(TagUtils(), ioc_json)
-                                if tagging
-                                else [],
-                            )
-                        )
-                        md5 += 1
-
-                    if "sha256" in ioc_json:
-                        indicator_list.append(
-                            Indicator(
-                                value=ioc_json["sha256"].lower(),
-                                type=IndicatorType.SHA256,
-                                active=ioc_json.get("active", True),
-                                severity=RATING_TO_SEVERITY[
-                                    ioc_json.get("rating", 0)
-                                ],
-                                reputation=self.get_reputation(ioc_json),
-                                comments=ioc_json.get("description", ""),
-                                firstSeen=ioc_json.get("dateAdded"),
-                                lastSeen=ioc_json.get("lastModified"),
-                                tags=self._create_tags(TagUtils(), ioc_json)
-                                if tagging
-                                else [],
-                            )
-                        )
-                        sha256 += 1
-                else:
-                    for url in ioc_json["text"].split(","):
-                        indicator_list.append(
-                            Indicator(
-                                value=url,
-                                type=IndicatorType.URL,
-                                active=ioc_json.get("active", True),
-                                severity=RATING_TO_SEVERITY[
-                                    ioc_json.get("rating", 0)
-                                ],
-                                reputation=self.get_reputation(ioc_json),
-                                comments=ioc_json.get("description", ""),
-                                firstSeen=ioc_json.get("dateAdded"),
-                                lastSeen=ioc_json.get("lastModified"),
-                                tags=self._create_tags(TagUtils(), ioc_json)
-                                if tagging
-                                else [],
-                            )
-                        )
-                        url_ioc += 1
-            else:
                 skipped += 1
+                continue
 
-        self.logger.info(f"Debug Plugin: Threatconnect, Stats - Total File IOCs: {file}, MD5: {md5}, SHA256: {sha256}, URL: {url_ioc}, skipped: {skipped}")
+            if ioc_json["type"] == "File":
+                file_count += 1
+                if "md5" in ioc_json:
+                    indicator_list.append(
+                        Indicator(
+                            value=ioc_json["md5"].lower(),
+                            type=IndicatorType.MD5,
+                            active=ioc_json.get("active", True),
+                            severity=RATING_TO_SEVERITY[ioc_json.get("rating", 0)],
+                            reputation=self.get_reputation(ioc_json),
+                            comments=ioc_json.get("description", ""),
+                            firstSeen=ioc_json.get("dateAdded"),
+                            lastSeen=ioc_json.get("lastModified"),
+                            tags=self._create_tags(TagUtils(), ioc_json)
+                            if tagging
+                            else [],
+                        )
+                    )
+                    md5 += 1
+
+                if "sha256" in ioc_json:
+                    indicator_list.append(
+                        Indicator(
+                            value=ioc_json["sha256"].lower(),
+                            type=IndicatorType.SHA256,
+                            active=ioc_json.get("active", True),
+                            severity=RATING_TO_SEVERITY[ioc_json.get("rating", 0)],
+                            reputation=self.get_reputation(ioc_json),
+                            comments=ioc_json.get("description", ""),
+                            firstSeen=ioc_json.get("dateAdded"),
+                            lastSeen=ioc_json.get("lastModified"),
+                            tags=self._create_tags(TagUtils(), ioc_json)
+                            if tagging
+                            else [],
+                        )
+                    )
+                    sha256 += 1
+            else:
+                for url in ioc_json["text"].split(","):
+                    indicator_list.append(
+                        Indicator(
+                            value=url,
+                            type=IndicatorType.URL,
+                            active=ioc_json.get("active", True),
+                            severity=RATING_TO_SEVERITY[ioc_json.get("rating", 0)],
+                            reputation=self.get_reputation(ioc_json),
+                            comments=ioc_json.get("description", ""),
+                            firstSeen=ioc_json.get("dateAdded"),
+                            lastSeen=ioc_json.get("lastModified"),
+                            tags=self._create_tags(TagUtils(), ioc_json)
+                            if tagging
+                            else [],
+                        )
+                    )
+                    url_ioc += 1
+        self.logger.debug(
+            f"{self.log_prefix}: Stats - Total File IOCs: {file_count}, MD5: {md5}, SHA256: {sha256}, URL: {url_ioc}, skipped: {skipped}"
+        )
 
     def pull_data_from_threatconnect(
         self,
@@ -362,21 +407,62 @@ class ThreatConnectPlugin(PluginBase):
             List[Indicator]: List of Indicator Models.
         """
         indicator_list = []
-        self.logger.info(f"Debug Plugin: Threatconnect, Pulling data from threatconnect")
-        api_url = self.get_api_url(api_path, threat_type)
+        page_count = 0
+        api_url = None
+        if self.storage is not None:
+            storage = self.storage
+        else:
+            storage = {}
+
+        self.logger.debug(
+            f"{self.log_prefix}: Pulling the indicators, storage value: {storage}"
+        )
+        api_url = storage.get("next_uri")
+        prev_configuration = storage.get("configuration_details", {})
+        prev_base_url = prev_configuration.get("base_url", "")
+        prev_access_id = prev_configuration.get("access_id", "")
+        prev_secret_key = prev_configuration.get("secret_key", "")
+        prev_threat_type = prev_configuration.get("threat_type", "")
+        base_url = self.configuration["base_url"]
+        access_id = self.configuration["access_id"]
+        secret_key = self.configuration["secret_key"]
+
+        configuration_match = (
+            prev_base_url.strip("/") == base_url.strip("/")
+            and prev_access_id == access_id
+            and prev_secret_key == secret_key
+            and prev_threat_type == threat_type
+        )
+        # self.logger.info(f"Here is the configuration match: {configuration_match}")
+        self.logger.debug(
+            f"{self.log_prefix}: Previous configuration's comparison with current configuration. Match result: {configuration_match}"
+        )
+        if not (api_url and configuration_match):
+            api_url = self.get_api_url(api_path, threat_type)
+
         while True:
-            ioc_response = self.get_pull_request(
-                api_url,
+            self.logger.debug(
+                f"{self.log_prefix}: API URL to fetch the indicators: {api_url}"
             )
-            self.logger.info(f"Debug Plugin: Threatconnect, API Response code: {ioc_response.status_code}")
-            ioc_response_json = self.handle_error(ioc_response)
+            try:
+                ioc_response = self.get_pull_request(
+                    api_url,
+                )
+                ioc_response_json = self.handle_error(ioc_response)
+            except Exception as ex:
+                storage.clear()
+                storage["next_uri"] = api_url
+                storage["configuration_details"] = self.configuration
+                self.logger.debug(
+                    f"{self.log_prefix}: The pulling of the indicators will be resumed in the next pull cycle"
+                )
+                return indicator_list
             if ioc_response_json.get("status", "") != "Success":
                 raise requests.exceptions.HTTPError(
-                    f"Plugin: ThreatConnect, Unable to fetch Indicator. "
-                    f"Error: {ioc_response_json.get('message', '', )}."
+                    f"{self.log_prefix}: Unable to fetch Indicator. "
+                    f"Error: {ioc_response_json.get('message', '')}."
                 )
             elif ioc_response_json.get("data", None):
-                self.logger.info(f"Debug Plugin: Threatconnect, Total data: {len(ioc_response_json.get('data', []))}")
                 self.make_indicators(
                     ioc_response_json,
                     tagging,
@@ -384,17 +470,27 @@ class ThreatConnectPlugin(PluginBase):
                 )
                 # Handling Result Limit Of API
                 if ioc_response_json.get("next", None):
-                    self.logger.info(f"Debug Plugin: Threatconnect, The request has next page. We will be querying threatconnect for more indicators")
                     api_url = ioc_response_json["next"].replace(
-                        self.configuration["base_url"], ""
+                        self.configuration["base_url"].strip("/"), ""
                     )
                 else:
-                    self.logger.info(f"Debug Plugin: Threatconnect, Total number of indicators returned: {len(indicator_list)}")
+                    storage.clear()
+                    storage["configuration_details"] = self.configuration
                     return indicator_list
             else:
                 # case: status -> Success, return -> []
-                self.logger.info(f"Debug Plugin: Threatconnect, Returning empty list")
+                storage.clear()
+                storage["configuration_details"] = self.configuration
                 return []
+
+            page_count += 1
+            if page_count >= PAGE_LIMIT:
+                storage["next_uri"] = api_url
+                storage["configuration_details"] = self.configuration
+                self.logger.info(
+                    f"{self.log_prefix}: Page limit of {PAGE_LIMIT} has reached. Returning {len(indicator_list)} indicators"
+                )
+                return indicator_list
 
     def _create_tags(self, tag_utils: TagUtils, ioc_response) -> List[str]:
         """Create tag list and add tags to netskope using tag_utils.
@@ -411,17 +507,14 @@ class ThreatConnectPlugin(PluginBase):
             if "tags" in ioc_response and ioc_response["tags"] != {}:
                 for tag_json in ioc_response["tags"]["data"]:
                     tag_name = tag_json["name"]
-                    if tag_name is not None and not tag_utils.exists(
-                        tag_name.strip()
-                    ):
+                    if tag_name is not None and not tag_utils.exists(tag_name.strip()):
                         tag_utils.create_tag(
                             TagIn(name=tag_name.strip(), color="#ED3347")
                         )
                         tag_list.append(tag_name.strip())
         except KeyError as k:
             self.logger.error(
-                f"Plugin: ThreatConnect, "
-                f"Key not found for tag utility. Error: {k}"
+                f"{self.log_prefix}: " f"Key not found for tag utility. Error: {k}"
             )
         return tag_list
 
@@ -441,25 +534,18 @@ class ThreatConnectPlugin(PluginBase):
         try:
             return request
         except requests.exceptions.ProxyError as err:
-            self.logger.error(
-                "Plugin: ThreatConnect, Invalid proxy configuration."
-            )
+            self.logger.error(f"{self.log_prefix}: Invalid proxy configuration.")
             raise err
         except requests.exceptions.ConnectionError as err:
-            self.logger.error(
-                f"Plugin: ThreatConnect, Connection Error occurred: {err}."
-            )
+            self.logger.error(f"{self.log_prefix}: Connection Error occurred: {err}.")
             raise err
         except requests.exceptions.RequestException as err:
             self.logger.error(
-                f"Plugin: ThreatConnect, "
-                f"Request Exception occurred: {err}."
+                f"{self.log_prefix}: " f"Request Exception occurred: {err}."
             )
             raise err
         except Exception as err:
-            self.logger.error(
-                f"Plugin: ThreatConnect, Exception occurred: {err}."
-            )
+            self.logger.error(f"{self.log_prefix}: Exception occurred: {err}.")
             raise err
 
     def _is_valid_credentials(
@@ -530,7 +616,7 @@ class ThreatConnectPlugin(PluginBase):
             or "threatconnect" not in configuration["base_url"].split(".")
         ):
             self.logger.error(
-                "ThreatConnect Plugin: "
+                f"{self.log_prefix}: "
                 "Invalid Base URL found in the configuration parameters."
             )
             return ValidationResult(
@@ -544,7 +630,7 @@ class ThreatConnectPlugin(PluginBase):
             or not configuration["access_id"].strip()
         ):
             self.logger.error(
-                "ThreatConnect Plugin: "
+                f"{self.log_prefix}: "
                 "Invalid Access ID found in the configuration parameters."
             )
             return ValidationResult(
@@ -558,7 +644,7 @@ class ThreatConnectPlugin(PluginBase):
             or not configuration["secret_key"].strip()
         ):
             self.logger.error(
-                "ThreatConnect Plugin: "
+                f"{self.log_prefix}: "
                 "No Secret key found in configuration parameters."
             )
             return ValidationResult(
@@ -569,7 +655,7 @@ class ThreatConnectPlugin(PluginBase):
             "enable_tagging"
         ] not in ["Yes", "No"]:
             self.logger.error(
-                "ThreatConnect Plugin: "
+                f"{self.log_prefix}: "
                 "Value of Enable Tagging should be 'Yes' or 'No'."
             )
             return ValidationResult(
@@ -582,7 +668,7 @@ class ThreatConnectPlugin(PluginBase):
             "is_pull_required"
         ] not in ["Yes", "No"]:
             self.logger.error(
-                "ThreatConnect Plugin: "
+                f"{self.log_prefix}: "
                 "Value of Enable Polling should be 'Yes' or 'No'."
             )
             return ValidationResult(
@@ -608,7 +694,7 @@ class ThreatConnectPlugin(PluginBase):
                 or int(configuration["days"]) > 365
             ):
                 self.logger.error(
-                    "ThreatConnect Plugin: "
+                    f"{self.log_prefix}: "
                     "Validation error occurred Error: "
                     "Invalid Initial Range provided."
                 )
@@ -634,7 +720,7 @@ class ThreatConnectPlugin(PluginBase):
             List[Indicator] : Return List of Indicators Models.
         """
         if self.configuration["is_pull_required"] == "Yes":
-            self.logger.info("Plugin: ThreatConnect Polling is enabled.")
+            self.logger.info(f"{self.log_prefix}: Polling is enabled.")
             api_path = "/api/v3/indicators"
             if self.configuration["enable_tagging"] == "Yes":
                 tagging = True
@@ -646,9 +732,7 @@ class ThreatConnectPlugin(PluginBase):
                 tagging,
             )
         else:
-            self.logger.info(
-                "Plugin: ThreatConnect Polling is disabled, skipping."
-            )
+            self.logger.info(f"{self.log_prefix}: Polling is disabled, skipping.")
             return []
 
     def get_group_id(self, action_dict):
@@ -701,19 +785,17 @@ class ThreatConnectPlugin(PluginBase):
                     and "name" in response.json()["data"]
                     and "id" in response.json()["data"]
                 ):
-                    action_dict.get("parameters")[
-                        "group_name"
-                    ] = response.json()["data"]["name"]
+                    action_dict.get("parameters")["group_name"] = response.json()[
+                        "data"
+                    ]["name"]
                     return response.json()["data"]["id"]
                 else:
                     self.logger.error(
-                        f"Error while creating a group. "
+                        f"{self.log_prefix}: Error while creating a group. "
                         f"Error: {response.json()['message']}"
                     )
             else:
-                return group_names[
-                    action_dict.get("parameters")["new_group_name"]
-                ]
+                return group_names[action_dict.get("parameters")["new_group_name"]]
 
     def prepare_payload(self, indicator, existing_group_id):
         """Prepare payload for request.
@@ -726,10 +808,7 @@ class ThreatConnectPlugin(PluginBase):
             Dict: return dictionary of data.
         """
         data = {}
-        if (
-            indicator.type == IndicatorType.URL
-            and 1 <= len(indicator.value) <= 500
-        ):
+        if indicator.type == IndicatorType.URL and 1 <= len(indicator.value) <= 500:
             data["text"] = indicator.value
             data["type"] = "url"
         elif indicator.type == IndicatorType.MD5:
@@ -804,10 +883,7 @@ class ThreatConnectPlugin(PluginBase):
         invalid_ioc = 0
         already_exists = 0
         for indicator in indicators:
-            if (
-                indicator.type == IndicatorType.URL
-                and len(indicator.value) > 500
-            ):
+            if indicator.type == IndicatorType.URL and len(indicator.value) > 500:
                 invalid_ioc += 1
                 continue
             data = self.prepare_payload(indicator, existing_group_id)
@@ -840,19 +916,18 @@ class ThreatConnectPlugin(PluginBase):
                     already_exists += 1
                 else:
                     self.logger.error(
-                        f"Error while updating indicator metadata. "
+                        f"{self.log_prefix}: Error while updating indicator metadata. "
                         f"Error: {response.json()['message']}."
                     )
             elif (
                 response.json()["message"].startswith("Please enter a valid")
-                or response.json()["message"]
-                == "This Indicator is contained on a "
+                or response.json()["message"] == "This Indicator is contained on a "
                 "system-wide exclusion list."
             ):
                 invalid_ioc += 1
             else:
                 self.logger.error(
-                    f"Error while pushing IoCs to ThreatConnect. "
+                    f"{self.log_prefix}: Error while pushing IoCs to ThreatConnect. "
                     f"Error: {response.json()['message']}."
                 )
                 return PushResult(
@@ -861,12 +936,12 @@ class ThreatConnectPlugin(PluginBase):
                 )
         if invalid_ioc != 0:
             self.logger.error(
-                f"Skipping {invalid_ioc} invalid IoCs while pushing to "
+                f"{self.log_prefix}: Skipping {invalid_ioc} invalid IoCs while pushing to "
                 f"ThreatConnect."
             )
         if already_exists != 0:
             self.logger.warn(
-                f"Updated {already_exists} IoC(s) on ThreatConnect."
+                f"{self.log_prefix}: Updated {already_exists} IoC(s) on ThreatConnect."
             )
         return PushResult(
             success=True,
@@ -879,9 +954,7 @@ class ThreatConnectPlugin(PluginBase):
         Returns:
             List[ActionWithoutParams]: Return list of actions.
         """
-        return [
-            ActionWithoutParams(label="Add to Group", value="add_to_group")
-        ]
+        return [ActionWithoutParams(label="Add to Group", value="add_to_group")]
 
     def get_owner(self):
         """Get owner information from given API credentials.
@@ -917,7 +990,7 @@ class ThreatConnectPlugin(PluginBase):
 
         # Owner not able to fetch.
         self.logger.error(
-            f"Error while fetching owner information. "
+            f"{self.log_prefix}: Error while fetching owner information. "
             f"Error: {response.json()['message']}."
         )
         return None
@@ -973,7 +1046,7 @@ class ThreatConnectPlugin(PluginBase):
                 else:
                     # Groups not able to fetch.
                     self.logger.error(
-                        f"Error while fetching group details. "
+                        f"{self.log_prefix}: Error while fetching group details. "
                         f"Error: {response.json()['message']}."
                     )
                     break
@@ -1050,9 +1123,7 @@ class ThreatConnectPlugin(PluginBase):
             ValidationResult: Valid configuration or not for action.
         """
         if action.value not in ["add_to_group"]:
-            return ValidationResult(
-                success=False, message="Invalid Action Provided."
-            )
+            return ValidationResult(success=False, message="Invalid Action Provided.")
         if (
             action.value in ["add_to_group"]
             and action.parameters["group_name"] == "create_group"
