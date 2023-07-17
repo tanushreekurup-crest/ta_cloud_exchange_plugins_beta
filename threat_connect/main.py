@@ -42,6 +42,7 @@ import requests
 import urllib.parse
 import os
 import json
+import copy
 from typing import Dict, List
 from netskope.integrations.cte.plugin_base import (
     PluginBase,
@@ -413,7 +414,7 @@ class ThreatConnectPlugin(PluginBase):
             storage = self.storage
         else:
             storage = {}
-        display_storage = self.storage
+        display_storage = copy.deepcopy(storage)
         configuration_details = {}
         next_uri = ""
         if display_storage and display_storage.get("configuration_details") and display_storage.get("configuration_details").get("access_id") and display_storage.get("configuration_details").get("secret_key"):
