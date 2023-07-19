@@ -87,6 +87,7 @@ SEVERITY_TO_RATING = {
 
 LIMIT = 1000  # Maximum Response LIMIT at Time.
 PAGE_LIMIT = 100
+MAX_RETRY = 3
 TAG_NAME = "Netskope CE"
 PLATFORM_NAME = "ThreatConnect"
 MODULE_NAME = "CTE"
@@ -309,7 +310,7 @@ class ThreatConnectPlugin(PluginBase):
         )
         return ioc_response
 
-    def make_indicators(self, ioc_response_json, tagging, indicator_list):
+    def make_indicators(self, ioc_response_json, indicator_list):
         """Add received data to Netskope.
 
         Args:
@@ -317,7 +318,10 @@ class ThreatConnectPlugin(PluginBase):
             tagging (_type_): _description_
             indicator_list (_type_): _description_
         """
-        md5, sha256, url_ioc, file_count, skipped = 0, 0, 0, 0, 0
+        md5, sha256, url_ioc, file_count, skipped_ioc = 0, 0, 0, 0, 0
+        skipped_md5, skipped_sha256, skipped_url = 0, 0, 0
+        skipped_tags = set()
+        tag_utils = TagUtils()
         for ioc_json in ioc_response_json["data"]:
             if (
                 "tags" in ioc_json
@@ -329,73 +333,93 @@ class ThreatConnectPlugin(PluginBase):
                     if "name" in tag_info
                 ]
             ):
-                skipped += 1
+                skipped_ioc += 1
                 continue
+            tag_list, tags = [], []
+            if self.configuration.get("enable_tagging", "No") == "Yes" and "tags" in ioc_json and ioc_json["tags"] != {}:
+                for tag_json in ioc_json.get("tags", {}).get("data", []):
+                    if tag_json.get("name"):
+                        tag_list.append(tag_json["name"])
+
+                tags, skipped = self._create_tags(
+                    tag_utils,
+                    tag_list,
+                    self.configuration,
+                )
+                skipped_tags.update(skipped)
 
             if ioc_json["type"] == "File":
                 file_count += 1
                 if "md5" in ioc_json:
-                    indicator_list.append(
-                        Indicator(
-                            value=ioc_json["md5"].lower(),
-                            type=IndicatorType.MD5,
-                            active=ioc_json.get("active", True),
-                            severity=RATING_TO_SEVERITY[ioc_json.get("rating", 0)],
-                            reputation=self.get_reputation(ioc_json),
-                            comments=ioc_json.get("description", ""),
-                            firstSeen=ioc_json.get("dateAdded"),
-                            lastSeen=ioc_json.get("lastModified"),
-                            tags=self._create_tags(TagUtils(), ioc_json)
-                            if tagging
-                            else [],
+                    try:
+                        indicator_list.append(
+                            Indicator(
+                                value=ioc_json["md5"].lower(),
+                                type=IndicatorType.MD5,
+                                active=ioc_json.get("active", True),
+                                severity=RATING_TO_SEVERITY[ioc_json.get("rating", 0)],
+                                reputation=self.get_reputation(ioc_json),
+                                comments=ioc_json.get("description", ""),
+                                firstSeen=ioc_json.get("dateAdded"),
+                                lastSeen=ioc_json.get("lastModified"),
+                                tags=tags,
+                            )
                         )
-                    )
-                    md5 += 1
+                        md5 += 1
+                    except Exception:
+                        skipped_md5 += 1
 
                 if "sha256" in ioc_json:
-                    indicator_list.append(
-                        Indicator(
-                            value=ioc_json["sha256"].lower(),
-                            type=IndicatorType.SHA256,
-                            active=ioc_json.get("active", True),
-                            severity=RATING_TO_SEVERITY[ioc_json.get("rating", 0)],
-                            reputation=self.get_reputation(ioc_json),
-                            comments=ioc_json.get("description", ""),
-                            firstSeen=ioc_json.get("dateAdded"),
-                            lastSeen=ioc_json.get("lastModified"),
-                            tags=self._create_tags(TagUtils(), ioc_json)
-                            if tagging
-                            else [],
+                    try:
+                        indicator_list.append(
+                            Indicator(
+                                value=ioc_json["sha256"].lower(),
+                                type=IndicatorType.SHA256,
+                                active=ioc_json.get("active", True),
+                                severity=RATING_TO_SEVERITY[ioc_json.get("rating", 0)],
+                                reputation=self.get_reputation(ioc_json),
+                                comments=ioc_json.get("description", ""),
+                                firstSeen=ioc_json.get("dateAdded"),
+                                lastSeen=ioc_json.get("lastModified"),
+                                tags=tags,
+                            )
                         )
-                    )
-                    sha256 += 1
+                        sha256 += 1
+                    except Exception:
+                        skipped_sha256 += 1
             else:
                 for url in ioc_json["text"].split(","):
-                    indicator_list.append(
-                        Indicator(
-                            value=url,
-                            type=IndicatorType.URL,
-                            active=ioc_json.get("active", True),
-                            severity=RATING_TO_SEVERITY[ioc_json.get("rating", 0)],
-                            reputation=self.get_reputation(ioc_json),
-                            comments=ioc_json.get("description", ""),
-                            firstSeen=ioc_json.get("dateAdded"),
-                            lastSeen=ioc_json.get("lastModified"),
-                            tags=self._create_tags(TagUtils(), ioc_json)
-                            if tagging
-                            else [],
+                    try:
+                        indicator_list.append(
+                            Indicator(
+                                value=url,
+                                type=IndicatorType.URL,
+                                active=ioc_json.get("active", True),
+                                severity=RATING_TO_SEVERITY[ioc_json.get("rating", 0)],
+                                reputation=self.get_reputation(ioc_json),
+                                comments=ioc_json.get("description", ""),
+                                firstSeen=ioc_json.get("dateAdded"),
+                                lastSeen=ioc_json.get("lastModified"),
+                                tags=tags,
+                            )
                         )
-                    )
-                    url_ioc += 1
+                        url_ioc += 1
+                    except Exception:
+                        skipped_url += 1
+
+        if len(skipped_tags) > 0:
+            self.logger.warn(
+                f"{self.log_prefix}: Skipping following tag(s) because they are too long: {', '.join(skipped_tags)}"
+            )
         self.logger.debug(
-            f"{self.log_prefix}: Stats - Total File IOCs: {file_count}, MD5: {md5}, SHA256: {sha256}, URL: {url_ioc}, skipped: {skipped}"
+            f"{self.log_prefix}: Stats - Total File IOCs: {file_count}, MD5: {md5}, SHA256: {sha256}, URL: {url_ioc}, Skipped IOC as they already exists: {skipped_ioc}, "
+            f"Skipped MD5: {skipped_md5}, Skipped SHA256: {skipped_sha256}, Skipped URL: {skipped_url}."
         )
 
     def pull_data_from_threatconnect(
         self,
         api_path: str,
-        threat_type: str,
-        tagging: bool,
+        threat_type: str
     ) -> List[Indicator]:
         """Fetch Data from ThreatConnect API.
 
@@ -453,9 +477,20 @@ class ThreatConnectPlugin(PluginBase):
                 f"{self.log_prefix}: API URL to fetch the indicators: {api_url}"
             )
             try:
-                ioc_response = self.get_pull_request(
-                    api_url,
-                )
+                for retry_count in range(MAX_RETRY):
+                    ioc_response = self.get_pull_request(
+                        api_url,
+                    )
+                    if ioc_response.status_code in [500, 503]:
+                        retry_after = (retry_count+1)*30
+                        self.logger.error(
+                            f"Received Error Code {ioc_response.status_code}, "
+                            f"Retrying after {retry_after} seconds."
+                        )
+                        time.sleep(retry_after)
+                        continue
+                    else:
+                        break
                 self.logger.debug(
                     f"{self.log_prefix}: API Response code: {ioc_response.status_code}"
                 )
@@ -464,6 +499,10 @@ class ThreatConnectPlugin(PluginBase):
                 storage.clear()
                 storage["next_uri"] = api_url
                 storage["configuration_details"] = self.configuration
+                self.logger.error(
+                    f"{self.log_prefix}: Error occurred while executing th pull cycle. Error: {ex}. "
+                    "The pulling of the indicators will be resumed in the next pull cycle"
+                )
                 self.logger.debug(
                     f"{self.log_prefix}: The pulling of the indicators will be resumed in the next pull cycle"
                 )
@@ -476,7 +515,6 @@ class ThreatConnectPlugin(PluginBase):
             elif ioc_response_json.get("data", None):
                 self.make_indicators(
                     ioc_response_json,
-                    tagging,
                     indicator_list,
                 )
                 # Handling Result Limit Of API
@@ -503,31 +541,27 @@ class ThreatConnectPlugin(PluginBase):
                 )
                 return indicator_list
 
-    def _create_tags(self, tag_utils: TagUtils, ioc_response) -> List[str]:
-        """Create tag list and add tags to netskope using tag_utils.
+    def _create_tags(
+        self, utils: TagUtils, tags: List[dict], configuration: dict
+    ) -> (List[str], List[str]):
+        """Create new tag(s) in database if required."""
+        if configuration["enable_tagging"] != "Yes":
+            return [], []
 
-        Args:
-            tag_utils (tag_utils): Tag utility class object.
-            ioc_response (JSON): Indicator response object.
-
-        Returns:
-            List[str]: List of tag names.
-        """
-        tag_list = []
-        try:
-            if "tags" in ioc_response and ioc_response["tags"] != {}:
-                for tag_json in ioc_response["tags"]["data"]:
-                    tag_name = tag_json["name"]
-                    if tag_name is not None and not tag_utils.exists(tag_name.strip()):
-                        tag_utils.create_tag(
-                            TagIn(name=tag_name.strip(), color="#ED3347")
+        tag_names, skipped_tags = [], []
+        for tag in tags:
+            try:
+                if tag is not None and not utils.exists(tag.strip()):
+                    utils.create_tag(
+                            TagIn(name=tag.strip(), color="#ED3347")
                         )
-                        tag_list.append(tag_name.strip())
-        except KeyError as k:
-            self.logger.error(
-                f"{self.log_prefix}: " f"Key not found for tag utility. Error: {k}"
-            )
-        return tag_list
+            except ValueError:
+                skipped_tags.append(tag)
+            except Exception:
+                skipped_tags.append(tag)
+            else:
+                tag_names.append(tag)
+        return tag_names, skipped_tags
 
     def _api_calls(self, request):
         """Call API and handle request exception.
@@ -733,14 +767,9 @@ class ThreatConnectPlugin(PluginBase):
         if self.configuration["is_pull_required"] == "Yes":
             self.logger.info(f"{self.log_prefix}: Polling is enabled.")
             api_path = "/api/v3/indicators"
-            if self.configuration["enable_tagging"] == "Yes":
-                tagging = True
-            else:
-                tagging = False
             return self.pull_data_from_threatconnect(
                 api_path,
-                self.configuration["threat_type"],
-                tagging,
+                self.configuration["threat_type"]
             )
         else:
             self.logger.info(f"{self.log_prefix}: Polling is disabled, skipping.")
