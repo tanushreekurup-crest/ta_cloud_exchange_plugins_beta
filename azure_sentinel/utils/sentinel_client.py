@@ -95,7 +95,9 @@ class AzureSentinelClient:
         else:
             self.verify_ssl = False
 
-    def _build_signature(self, workspace_id, primary_key, date, content_length):
+    def _build_signature(
+        self, workspace_id, primary_key, date, content_length
+    ):
         """Build the required authentication signature for Azure Sentinel.
 
         :param workspace_id: The ID of workspace to which the data is to be
@@ -122,9 +124,13 @@ class AzureSentinelClient:
             bytes_to_hash = bytes(string_to_hash, encoding="utf-8")
             decoded_key = base64.b64decode(primary_key)
             encoded_hash = base64.b64encode(
-                hmac.new(decoded_key, bytes_to_hash, digestmod=hashlib.sha256).digest()
+                hmac.new(
+                    decoded_key, bytes_to_hash, digestmod=hashlib.sha256
+                ).digest()
             ).decode()
-            authorization = "SharedKey {}:{}".format(workspace_id, encoded_hash)
+            authorization = "SharedKey {}:{}".format(
+                workspace_id, encoded_hash
+            )
             return authorization
         except Error as err:
             err_msg = (
@@ -137,7 +143,9 @@ class AzureSentinelClient:
             )
             raise AzureSentinelException(err_msg)
         except Exception as err:
-            err_msg = "An error occurred while building authentication signature."
+            err_msg = (
+                "An error occurred while building authentication signature."
+            )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg} {err}",
                 details=str(traceback.format_exc()),
@@ -174,7 +182,9 @@ class AzureSentinelClient:
         try:
             return response.json()
         except json.JSONDecodeError as err:
-            err_msg = f"Invalid JSON response received from API. Error: {str(err)}"
+            err_msg = (
+                f"Invalid JSON response received from API. Error: {str(err)}"
+            )
             self.logger.error(
                 message=f"{self.log_prefix}: {err_msg}",
                 details=f"API response: {response.text}",
@@ -191,7 +201,9 @@ class AzureSentinelClient:
             )
             raise AzureSentinelException(err_msg)
 
-    def handle_error(self, resp: requests.models.Response, logger_msg, is_validation):
+    def handle_error(
+        self, resp: requests.models.Response, logger_msg, is_validation
+    ):
         """Handle the different HTTP response code.
 
         Args:
@@ -298,7 +310,10 @@ class AzureSentinelClient:
                 )
                 if not is_validation and (
                     response.status_code == 429
-                    or (response.status_code >= 500 and response.status_code <= 600)
+                    or (
+                        response.status_code >= 500
+                        and response.status_code <= 600
+                    )
                 ):
                     if retry_counter == MAX_RETRIES - 1:
                         err_msg = (
@@ -332,7 +347,9 @@ class AzureSentinelClient:
                     )
                     time.sleep(RETRY_SLEEP_TIME)
                 else:
-                    return self.handle_error(response, logger_msg, is_validation)
+                    return self.handle_error(
+                        response, logger_msg, is_validation
+                    )
 
         except requests.exceptions.ProxyError as error:
             err_msg = "Proxy error occurred. Verify the provided proxy configuration."
@@ -391,7 +408,9 @@ class AzureSentinelClient:
             result = []
 
             size_in_bytes = sys.getsizeof(json.dumps(data))
-            size_in_mb = size_in_bytes / (1024.0**2)  # Convert bytes to megabytes
+            size_in_mb = size_in_bytes / (
+                1024.0**2
+            )  # Convert bytes to megabytes
             if size_in_mb > TARGET_SIZE_MB:
                 for item in range(0, len(data), BATCH_SIZE):
                     current_part = data[item : item + BATCH_SIZE]
@@ -419,6 +438,7 @@ class AzureSentinelClient:
             }
             headers = self._add_user_agent(headers)
             page = 0
+            start_time = time.time()
             for result_data in result:
                 get_payload_size = sys.getsizeof(json.dumps(result_data))
                 size_in_mb_payload = get_payload_size / (1024.0**2)
@@ -427,11 +447,13 @@ class AzureSentinelClient:
                 signature = self._build_signature(
                     workspace_id, shared_key, rfc1123date, content_length
                 )
+                page_start_time = time.time()
                 try:
                     headers["Authorization"] = signature
                     msg = ""
                     if not is_validation:
                         msg = f" for page {page}, content-size: {content_length}, size of payload: {get_payload_size} Bytes, size of payload: {size_in_mb_payload} MB, Number of records: {len(result_data)}"
+
                     self.api_helper(
                         logger_msg + msg,
                         uri,
@@ -442,28 +464,32 @@ class AzureSentinelClient:
                         proxies=self.proxy,
                         is_validation=is_validation,
                     )
+
                 except Exception:
                     skipped_count += len(result_data)
                     continue
+                page_end_time = time.time()
                 total_count += len(result_data)
                 if not is_validation:
-                    log_msg = "[{}]:[{}] Successfully ingested {} {}(s) for page {} to {}.".format(
+                    log_msg = "[{}]:[{}] Successfully ingested {} {}(s) for page {} to {}. Time taken: {} second(s).".format(
                         data_type,
                         sub_type,
                         len(result_data),
                         data_type,
                         page,
                         self.plugin_name,
+                        round(page_end_time - page_start_time, 2),
                     )
                     self.logger.info(f"{self.log_prefix}: {log_msg}")
-
+            end_time = time.time()
             if not is_validation:
-                log_msg = "[{}]:[{}] Successfully ingested {} {}(s) to {}.".format(
+                log_msg = "[{}]:[{}] Successfully ingested {} {}(s) to {}. Time taken: {} second(s).".format(
                     data_type,
                     sub_type,
                     total_count,
                     data_type,
                     self.plugin_name,
+                    round(end_time - start_time, 2),
                 )
                 self.logger.info(f"{self.log_prefix}: {log_msg}")
             if not is_validation and skipped_count > 0:
