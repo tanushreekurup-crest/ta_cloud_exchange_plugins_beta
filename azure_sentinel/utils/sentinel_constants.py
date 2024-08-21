@@ -59,18 +59,19 @@ ATTRIBUTE_DTYPE_MAP = {
     "suppression_start_time": "datetime",
     "conn_starttime": "datetime",
     "conn_endtime": "datetime",
-    "malsite_first_seen ": "datetime",
+    "malsite_first_seen": "datetime",
     "malsite_last_seen": "datetime",
     "scan_time": "datetime",
     "modified_date": "datetime",
     "created_date": "datetime",
 }
 MODULE_NAME = "CLS"
-PLUGIN_NAME = "Microsoft Azure Sentinel - Debug"
-PLUGIN_VERSION = "3.0.0-debug"
+PLUGIN_NAME = "Microsoft Azure Sentinel"
+PLUGIN_VERSION = "3.0.2"
 VALIDATION_ALPHANUM_PATTERN = r"^[a-zA-Z0-9_]+$"
 VALIDATION_DIGITS_PATTERN = r"^[\d_]+$"
 MAX_API_CALL = 3
 DEFAULT_WAIT = 30
 TARGET_SIZE_MB = 25
 BATCH_SIZE = 10000
+TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024
