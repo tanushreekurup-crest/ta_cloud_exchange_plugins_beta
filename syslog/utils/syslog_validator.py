@@ -28,26 +28,24 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
 
-"""Syslog Validator."""
-
+Syslog Validator."""
 
 import io
 import csv
+import traceback
 from jsonschema import validate
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
-from .syslog_constants import PLUGIN_NAME
 
 
 class SyslogValidator(object):
     """Syslog validator class."""
 
-    def __init__(self, logger, name):
+    def __init__(self, logger, log_prefix):
         """Initialize."""
         super().__init__()
         self.logger = logger
-        self.name = name
+        self.log_prefix = log_prefix
 
     def validate_syslog_port(self, syslog_port):
         """Validate syslog port.
@@ -56,7 +54,8 @@ class SyslogValidator(object):
             syslog_port: the syslog port to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not.
+            True in case of valid value, False otherwise
         """
         if syslog_port or syslog_port == 0:
             try:
@@ -145,7 +144,11 @@ class SyslogValidator(object):
             validate(instance=mappings, schema=schema)
         except JsonSchemaValidationError as err:
             self.logger.error(
-                f"{PLUGIN_NAME}[{self.name}]: Validation error occurred. Error: validating JSON schema: {err}"
+                message=(
+                    "{}: Validation error occurred. "
+                    "Error: validating JSON schema: {}".format(self.log_prefix, err)
+                ),
+                details=str(traceback.format_exc()),
             )
             return False
 
@@ -159,8 +162,14 @@ class SyslogValidator(object):
                         self.validate_taxonomy(subtype_taxonomy)
                     except JsonSchemaValidationError as err:
                         self.logger.error(
-                            f"{PLUGIN_NAME}[{self.name}]: Validation error occurred. Error: "
-                            f'while validating JSON schema for type "{data_type}" and subtype "{subtype}": {err}'
+                            message=(
+                                "{}: Validation error occurred. Error: "
+                                'while validating JSON schema for type "{}" '
+                                'and subtype "{}": {}'.format(
+                                    self.log_prefix, data_type, subtype, err
+                                )
+                            ),
+                            details=str(traceback.format_exc()),
                         )
                         return False
         return True
@@ -172,7 +181,8 @@ class SyslogValidator(object):
             mappings: the JSON string to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not.
+            True in case of valid value, False otherwise
         """
         if mappings is None:
             return False
@@ -182,7 +192,8 @@ class SyslogValidator(object):
 
         except Exception as err:
             self.logger.error(
-                f"{PLUGIN_NAME}[{self.name}]: Validation error occurred. Error: {err}"
+                message=f"{self.log_prefix}: Validation error occurred. Error: {err}",
+                details=str(traceback.format_exc()),
             )
 
         return False
@@ -194,17 +205,15 @@ class SyslogValidator(object):
             valid_extensions: the CSV string to be validated
 
         Returns:
-            Whether the provided value is valid or not. True in case of valid value, False otherwise
+            Whether the provided value is valid or not.
+            True in case of valid value, False otherwise
         """
         try:
-            csviter = csv.DictReader(
-                io.StringIO(valid_extensions), strict=True
-            )
+            csviter = csv.DictReader(io.StringIO(valid_extensions), strict=True)
             headers = next(csviter)
 
             if all(
-                header in headers
-                for header in ["CEF Key Name", "Length", "Data Type"]
+                header in headers for header in ["CEF Key Name", "Length", "Data Type"]
             ):
                 return True
         except Exception:

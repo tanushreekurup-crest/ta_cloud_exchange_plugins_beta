@@ -28,9 +28,8 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
 
-"""Syslog Plugin SSL Log Handler."""
+Syslog Plugin SSL Log Handler."""
 
 
 import os
@@ -130,13 +129,19 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
         "INFO": "info",
         "WARNING": "warning",
         "ERROR": "error",
-        "CRITICAL": "critical"
+        "CRITICAL": "critical",
     }
 
-    def __init__(self, transform_data, protocol, address, certs=None, facility=LOG_USER, socktype=None):
+    def __init__(
+        self,
+        protocol,
+        address,
+        certs=None,
+        facility=LOG_USER,
+        socktype=None,
+    ):
         """Init method."""
         self.protocol = protocol
-        self.transform_data = transform_data
         if protocol == "TLS":
             logging.Handler.__init__(self)
 
@@ -151,15 +156,15 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
 
                 cert.write(str.encode(certs))
                 cert.flush()
-                self.socket = ssl.wrap_socket(s,
-                                            ca_certs=cert.name,
-                                            cert_reqs=ssl.CERT_REQUIRED)
+                self.socket = ssl.wrap_socket(
+                    s, ca_certs=cert.name, cert_reqs=ssl.CERT_REQUIRED
+                )
                 cert.close()
                 os.unlink(cert.name)
             else:
                 self.socket = ssl.wrap_socket(s, cert_reqs=ssl.CERT_NONE)
             self.socket.connect(address)
-            
+
         else:
             super().__init__(address=address, socktype=socktype)
 
@@ -171,38 +176,38 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
     def emit(self, record):
         """Emit Method."""
         if self.protocol == "TLS":
-            msg = self.format(record) + '\n'
-            prio = '<%d>' % self.encodePriority(self.facility,
-                                                self.mapPriority(record.levelname))
+            msg = self.format(record) + "\n"
+            prio = "<%d>" % self.encodePriority(
+                self.facility, self.mapPriority(record.levelname)
+            )
             if type(msg) == "unicode":
-                msg = msg.encode('utf-8')
+                msg = msg.encode("utf-8")
                 if codecs:
                     msg = codecs.BOM_UTF8 + msg
-            if self.transform_data:
-                msg = prio + msg
+            msg = prio + msg
             try:
                 self.socket.write(str.encode(msg))
-            except(KeyboardInterrupt, SystemExit):
+            except (KeyboardInterrupt, SystemExit):
                 raise
-            except Exception:
+            except Exception as err:
                 self.handleError(record)
+                raise err
         else:
             try:
                 msg = self.format(record)
                 if self.ident:
                     msg = self.ident + msg
                 if self.append_nul:
-                    msg += '\000'
+                    msg += "\000"
 
                 # We need to convert record level to lowercase, maybe this will
                 # change in the future.
-                prio = '<%d>' % self.encodePriority(self.facility,
-                                                    self.mapPriority(record.levelname))
-                prio = prio.encode('utf-8')
+                prio = "<%d>" % self.encodePriority(
+                    self.facility, self.mapPriority(record.levelname)
+                )
+                prio = prio.encode("utf-8")
                 # Message is a string. Convert to bytes as required by RFC 5424
-                msg = msg.encode('utf-8')
-                if self.transform_data:
-                    msg = prio + msg
+                msg = prio + msg.encode("utf-8")
                 if self.unixsocket:
                     try:
                         self.socket.send(msg)
@@ -214,5 +219,6 @@ class SSLSysLogHandler(logging.handlers.SysLogHandler):
                     self.socket.sendto(msg, self.address)
                 else:
                     self.socket.sendall(msg)
-            except Exception:
+            except Exception as err:
                 self.handleError(record)
+                raise err
