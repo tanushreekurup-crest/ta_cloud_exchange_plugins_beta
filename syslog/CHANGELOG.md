@@ -1,14 +1,31 @@
+# 3.2.2
+## Added
+- Enhancement in the error handling.
+
+# 3.2.1
+## Added
+- Added support for JA3 fields in WebTX and Application events.
+
+# 3.2.0
+## Added
+- Added the RFC fields prefix in the JSON formatted data.
+- Added support to send 'Debug' logs.
+
 # 3.1.0
 ## Added
-- Removed priority from the syslog message for the logs that are not transformed in CEF.
+- Added support for WebTX JSON format to send specific fields to SIEM platform
 
 # 3.0.0
 ## Added
 - Added Support for the incident event type. To pull and ingest this event type update your CE version to 4.1.0
 - Added Support for the CTEP alert type. To pull and ingest this alert type update your CE version to 4.2.0.
 - Added support for WebTx format3.
-## Fixed 
+## Changed
+- Changed error logs to warning if single field is skipped.
+## Fixed
 - Fixed JSON format of raw data.
+## Removed
+- Removed priority from the syslog message for the logs that are not transformed in CEF.
 
 # 2.0.1
 ## Added
@@ -32,7 +49,7 @@
 
 # 1.1.1
 ## Added
-- Updated webTx mappings.
+- Updated WebTX mappings.
 
 # 1.1.0
 ## Added
