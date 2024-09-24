@@ -798,15 +798,15 @@ class DatadogPlugin(PluginBase):
             total_count = 0
             page = 0
             headers = self.get_api_headers(self.configuration)
-            tenant = None
-            if data_type != "webtx":
-                helper = AlertsHelper()
-                tenant = helper.get_tenant_cls(self.source)
+            # tenant = None
+            # if data_type != "webtx":
+            #     helper = AlertsHelper()
+            #     tenant = helper.get_tenant_cls(self.source)
 
             params = {
                 "ddsource": "netskope-ce",
                 "ddtags": self.configuration.get("dd_tags", ""),
-                "hostname": tenant.name if tenant and tenant.name else "",
+                # "hostname": tenant.name if tenant and tenant.name else "",
             }
             for chunk in transformed_data:
                 page += 1
